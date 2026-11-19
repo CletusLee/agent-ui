@@ -9,6 +9,8 @@ import {
 } from '@/types/os'
 
 interface Store {
+  activeView: 'chat' | 'workflows' | 'agents'
+  setActiveView: (view: 'chat' | 'workflows' | 'agents') => void
   hydrated: boolean
   setHydrated: () => void
   streamingErrorMessage: string
@@ -59,6 +61,8 @@ interface Store {
 export const useStore = create<Store>()(
   persist(
     (set) => ({
+      activeView: 'chat',
+      setActiveView: (activeView) => set({ activeView }),
       hydrated: false,
       setHydrated: () => set({ hydrated: true }),
       streamingErrorMessage: '',

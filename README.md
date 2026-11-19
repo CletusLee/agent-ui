@@ -6,6 +6,7 @@ A modern chat interface for AgentOS built with Next.js, Tailwind CSS, and TypeSc
 
 ## Features
 
+- 🔎 **Workflow and Agent Explorer**: Inspect workflow branches, parallel steps and Agent/Team details. See the [integration guide and screenshots](docs/workflow-explorer.md) for the required Factory backend endpoints.
 - 🔗 **AgentOS Integration**: Seamlessly connect to local and live AgentOS instances
 - 💬 **Modern Chat Interface**: Clean design with real-time streaming support
 - 🧩 **Tool Calls Support**: Visualizes agent tool calls and their results

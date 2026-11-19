@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { useQueryState } from 'nuqs'
 import { truncateText } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Bot, Users, Workflow } from 'lucide-react'
 
 const ENDPOINT_PLACEHOLDER = 'NO ENDPOINT ADDED'
 const SidebarHeader = () => (
@@ -217,7 +218,9 @@ const Sidebar = ({
     selectedModel,
     hydrated,
     isEndpointLoading,
-    mode
+    mode,
+    activeView,
+    setActiveView
   } = useStore()
   const [isMounted, setIsMounted] = useState(false)
   const [agentId] = useQueryState('agent')
@@ -264,15 +267,51 @@ const Sidebar = ({
         }}
       >
         <SidebarHeader />
+        <div
+          className="grid grid-cols-2 gap-2"
+          role="group"
+          aria-label="Workspace"
+        >
+          <Button
+            variant="ghost"
+            onClick={() => setActiveView('chat')}
+            aria-pressed={activeView === 'chat'}
+            className={`h-9 rounded-xl text-xs uppercase ${activeView === 'chat' ? 'bg-accent text-primary' : 'text-muted'}`}
+          >
+            <Bot className="size-4" />
+            Chat
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setActiveView('workflows')}
+            aria-pressed={activeView === 'workflows'}
+            className={`h-9 rounded-xl text-xs uppercase ${activeView === 'workflows' ? 'bg-accent text-primary' : 'text-muted'}`}
+          >
+            <Workflow className="size-4" />
+            Workflows
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setActiveView('agents')}
+            aria-pressed={activeView === 'agents'}
+            className={`h-9 rounded-xl text-xs uppercase ${activeView === 'agents' ? 'bg-accent text-primary' : 'text-muted'}`}
+          >
+            <Users className="size-4" />
+            Agents
+          </Button>
+        </div>
         <NewChatButton
           disabled={messages.length === 0}
-          onClick={handleNewChat}
+          onClick={() => {
+            setActiveView('chat')
+            handleNewChat()
+          }}
         />
         {isMounted && (
           <>
             <Endpoint />
             <AuthToken hasEnvToken={hasEnvToken} envToken={envToken} />
-            {isEndpointActive && (
+            {isEndpointActive && activeView === 'chat' && (
               <>
                 <motion.div
                   className="flex w-full flex-col items-start gap-2"

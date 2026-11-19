@@ -228,6 +228,95 @@ export interface TeamDetails {
   model?: Model
 }
 
+export type WorkflowStepType =
+  | 'agent'
+  | 'team'
+  | 'executor'
+  | 'condition'
+  | 'parallel'
+
+export interface WorkflowStepDefinition {
+  name: string
+  type: WorkflowStepType
+  ref?: string
+  steps?: WorkflowStepDefinition[]
+  else_steps?: WorkflowStepDefinition[]
+}
+
+export interface WorkflowSummary {
+  id: string
+  name?: string
+  description?: string
+}
+
+export interface WorkflowDefinition extends WorkflowSummary {
+  steps: WorkflowStepDefinition[]
+  revision: string
+}
+
+export interface FactoryRevision {
+  revision: string
+  workflows: number
+}
+
+export interface FactorySkillDefinition {
+  id: string
+  description: string
+  instructions: string
+}
+
+export interface FactoryAgentDefinition {
+  id: string
+  name: string
+  group: string
+  summary: string
+  inputs: string
+  outputs: string
+  skills: FactorySkillDefinition[]
+  instructions: string
+  revision: string
+  source: string
+}
+
+export interface FactoryTeamMember {
+  id: string
+  name: string
+  group: string
+  summary: string
+}
+
+export interface FactoryTeamDefinition {
+  id: string
+  name: string
+  members: FactoryTeamMember[]
+  instructions: string
+  revision: string
+  source: string
+}
+
+export interface RuntimeTool {
+  name?: string
+  description?: string
+}
+
+export interface RuntimeToolCollection {
+  tools?: RuntimeTool[]
+}
+
+export interface AgentRuntimeDetails extends AgentDetails {
+  is_factory?: boolean
+  model?: Model
+  tools?: RuntimeToolCollection | RuntimeTool[]
+}
+
+export interface TeamRuntimeDetails extends TeamDetails {
+  mode?: string
+  streaming?: boolean
+  is_factory?: boolean
+  tools?: RuntimeToolCollection | RuntimeTool[]
+  members?: AgentRuntimeDetails[]
+}
+
 export interface ImageData {
   revised_prompt: string
   url: string

@@ -23,6 +23,7 @@ const useChatActions = () => {
   const [agentId, setAgentId] = useQueryState('agent')
   const [teamId, setTeamId] = useQueryState('team')
   const [, setDbId] = useQueryState('db_id')
+  const [viewQuery] = useQueryState('view')
 
   const getStatus = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -100,7 +101,7 @@ const useChatActions = () => {
             const firstTeam = teams[0]
             setTeamId(firstTeam.id)
             setSelectedModel(firstTeam.model?.provider || '')
-            setDbId(firstTeam.db_id || '')
+            if (!viewQuery || viewQuery === 'chat') setDbId(firstTeam.db_id || '')
             setAgentId(null)
             setTeams(teams)
           } else if (currentMode === 'agent' && agents.length > 0) {
@@ -108,7 +109,7 @@ const useChatActions = () => {
             setMode('agent')
             setAgentId(firstAgent.id)
             setSelectedModel(firstAgent.model?.model || '')
-            setDbId(firstAgent.db_id || '')
+            if (!viewQuery || viewQuery === 'chat') setDbId(firstAgent.db_id || '')
             setAgents(agents)
           }
         } else {
@@ -119,14 +120,14 @@ const useChatActions = () => {
             if (agent) {
               setMode('agent')
               setSelectedModel(agent.model?.model || '')
-              setDbId(agent.db_id || '')
+              if (!viewQuery || viewQuery === 'chat') setDbId(agent.db_id || '')
               setTeamId(null)
             } else if (agents.length > 0) {
               const firstAgent = agents[0]
               setMode('agent')
               setAgentId(firstAgent.id)
               setSelectedModel(firstAgent.model?.model || '')
-              setDbId(firstAgent.db_id || '')
+              if (!viewQuery || viewQuery === 'chat') setDbId(firstAgent.db_id || '')
               setTeamId(null)
             }
           } else if (teamId) {
@@ -134,14 +135,14 @@ const useChatActions = () => {
             if (team) {
               setMode('team')
               setSelectedModel(team.model?.provider || '')
-              setDbId(team.db_id || '')
+              if (!viewQuery || viewQuery === 'chat') setDbId(team.db_id || '')
               setAgentId(null)
             } else if (teams.length > 0) {
               const firstTeam = teams[0]
               setMode('team')
               setTeamId(firstTeam.id)
               setSelectedModel(firstTeam.model?.provider || '')
-              setDbId(firstTeam.db_id || '')
+              if (!viewQuery || viewQuery === 'chat') setDbId(firstTeam.db_id || '')
               setAgentId(null)
             }
           }
@@ -184,7 +185,8 @@ const useChatActions = () => {
     setTeamId,
     setDbId,
     agentId,
-    teamId
+    teamId,
+    viewQuery
   ])
 
   return {

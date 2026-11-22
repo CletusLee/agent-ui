@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   Bot,
@@ -17,8 +17,9 @@ import {
 import { Button } from '@/components/ui/button'
 import ComponentDetails from '@/components/factory/ComponentDetails'
 import {
+  getFactoryWorkflowDefinitionAPI,
   getFactoryRevisionAPI,
-  getWorkflowDefinitionAPI,
+  getWorkflowRuntimeDetailsAPI,
   getWorkflowsAPI
 } from '@/api/os'
 import { useStore } from '@/store'
@@ -34,8 +35,14 @@ const STEP_TYPE_LABELS: Record<WorkflowStepType, string> = {
   team: 'Team',
   executor: 'Python function',
   condition: 'Condition',
-  parallel: 'Parallel group'
+  parallel: 'Parallel group',
+  runtime_step: 'AgentOS step'
 }
+
+const stepTypeLabel = (type: string) =>
+  Object.prototype.hasOwnProperty.call(STEP_TYPE_LABELS, type)
+    ? STEP_TYPE_LABELS[type as WorkflowStepType]
+    : `Unsupported step (${type || 'unknown'})`
 
 const EXECUTOR_DESCRIPTIONS: Record<string, string> = {
   evidence_gate: 'Checks the work item and required evidence before planning.',
@@ -84,6 +91,144 @@ const workflowCounts = (steps: WorkflowStepDefinition[]) => {
   return { count, agents: agents.size, teams: teams.size }
 }
 
+type StepRelationship = {
+  label: string
+  step?: WorkflowStepDefinition
+  path?: string
+}
+
+type StepRelationships = {
+  previous: StepRelationship
+  next: StepRelationship
+  parallelSiblings: Array<{ step: WorkflowStepDefinition; path: string }>
+}
+
+const findStepRelationships = (
+  steps: WorkflowStepDefinition[],
+  targetPath: string
+): StepRelationships | null => {
+  const visit = (
+    items: WorkflowStepDefinition[],
+    prefix: string,
+    sequenceName: string,
+    previousAtStart: StepRelationship,
+    nextAtEnd: StepRelationship,
+    parallelGroup?: {
+      step: WorkflowStepDefinition
+      path: string
+      next: StepRelationship
+      siblings: WorkflowStepDefinition[]
+    }
+  ): StepRelationships | null => {
+    for (let index = 0; index < items.length; index += 1) {
+      const step = items[index]
+      const path = `${prefix}.${index}`
+      const previous = parallelGroup
+        ? {
+            label: `Starts with parallel group ${parallelGroup.step.name}`,
+            step: parallelGroup.step,
+            path: parallelGroup.path
+          }
+        : index > 0
+          ? {
+              label: `Previous step in ${sequenceName}`,
+              step: items[index - 1],
+              path: `${prefix}.${index - 1}`
+            }
+          : previousAtStart
+      const next = parallelGroup
+        ? parallelGroup.next
+        : index < items.length - 1
+          ? {
+              label: `Next step in ${sequenceName}`,
+              step: items[index + 1],
+              path: `${prefix}.${index + 1}`
+            }
+          : nextAtEnd
+
+      if (path === targetPath) {
+        return {
+          previous,
+          next,
+          parallelSiblings: parallelGroup
+            ? parallelGroup.siblings.flatMap((sibling, siblingIndex) =>
+                siblingIndex === index
+                  ? []
+                  : [{
+                      step: sibling,
+                      path: `${prefix}.${siblingIndex}`
+                    }]
+              )
+            : []
+        }
+      }
+
+      const nextAfterStep: StepRelationship = parallelGroup
+        ? parallelGroup.next
+        : index < items.length - 1
+          ? {
+              label: `Next step after ${step.name}`,
+              step: items[index + 1],
+              path: `${prefix}.${index + 1}`
+            }
+          : nextAtEnd
+
+      if (step.type === 'condition') {
+        const truePath = visit(
+          step.steps || [],
+          `${path}.then`,
+          `${step.name} true branch`,
+          { label: `True branch starts at ${step.name}`, step, path },
+          nextAfterStep
+        )
+        if (truePath) return truePath
+
+        const falsePath = visit(
+          step.else_steps || [],
+          `${path}.else`,
+          `${step.name} false branch`,
+          { label: `False branch starts at ${step.name}`, step, path },
+          nextAfterStep
+        )
+        if (falsePath) return falsePath
+      }
+
+      if (step.type === 'parallel') {
+        const nextAfterGroup = nextAfterStep.step
+          ? {
+              ...nextAfterStep,
+              label: `After all ${step.name} members finish`
+            }
+          : { label: `Workflow end after ${step.name} members finish` }
+        const parallelPath = visit(
+          step.steps || [],
+          `${path}.parallel`,
+          `${step.name} parallel members`,
+          { label: `Parallel group ${step.name} starts`, step, path },
+          nextAfterGroup,
+          {
+            step,
+            path,
+            next: nextAfterGroup,
+            siblings: step.steps || []
+          }
+        )
+        if (parallelPath) return parallelPath
+      }
+    }
+
+    return null
+  }
+
+  return visit(
+    steps,
+    'root',
+    'workflow sequence',
+    { label: 'Workflow start' },
+    { label: 'End of workflow' }
+  )
+}
+
 const StepCard = ({
   step,
   path,
@@ -109,7 +254,7 @@ const StepCard = ({
         {step.name}
       </span>
       <span className="mt-1 block whitespace-normal text-xs leading-5 text-muted [overflow-wrap:anywhere]">
-        {STEP_TYPE_LABELS[step.type]}
+        {stepTypeLabel(step.type)}
         {step.ref ? ` · ${step.ref}` : ''}
       </span>
     </span>
@@ -223,16 +368,216 @@ const WorkflowSteps = ({
   </div>
 )
 
+const GraphConnector = () => (
+  <div
+    aria-hidden="true"
+    className="flex h-8 flex-col items-center justify-center text-muted/70"
+  >
+    <span className="h-4 border-l border-primary/25" />
+    <ChevronDown className="-mt-1 size-4 bg-background" />
+  </div>
+)
+
+const WorkflowGraph = ({
+  steps,
+  prefix,
+  selectedPath,
+  onSelect,
+  sequenceConnectors = true
+}: {
+  steps: WorkflowStepDefinition[]
+  prefix: string
+  selectedPath: string
+  onSelect: (step: WorkflowStepDefinition, path: string) => void
+  sequenceConnectors?: boolean
+}) => (
+  <div role="group" aria-label="Workflow graph sequence" className="min-w-0">
+    {steps.map((step, index) => {
+      const path = `${prefix}.${index}`
+      const nestedSteps = step.steps || []
+      const alternateSteps = step.else_steps || []
+
+      return (
+        <div key={path} className="min-w-0">
+          <div className="mx-auto w-full max-w-2xl">
+            <StepCard
+              step={step}
+              path={path}
+              selected={selectedPath === path}
+              onSelect={onSelect}
+            />
+          </div>
+
+          {step.type === 'condition' && (
+            <div
+              className="mt-3 grid min-w-0 gap-3"
+              style={{
+                gridTemplateColumns:
+                  'repeat(auto-fit, minmax(min(100%, 22rem), 1fr))'
+              }}
+            >
+              <section
+                aria-label={`${step.name} true branch`}
+                className="min-w-0 rounded-xl border border-positive/20 bg-positive/5 p-2 sm:p-3"
+              >
+                <h4 className="text-[11px] font-medium uppercase tracking-wide text-positive">
+                  True branch
+                </h4>
+                <GraphConnector />
+                {nestedSteps.length > 0 ? (
+                  <WorkflowGraph
+                    steps={nestedSteps}
+                    prefix={`${path}.then`}
+                    selectedPath={selectedPath}
+                    onSelect={onSelect}
+                  />
+                ) : (
+                  <p className="text-xs text-muted">No steps in this branch.</p>
+                )}
+              </section>
+              <section
+                aria-label={`${step.name} false branch`}
+                className="min-w-0 rounded-xl border border-destructive/20 bg-destructive/5 p-2 sm:p-3"
+              >
+                <h4 className="text-[11px] font-medium uppercase tracking-wide text-destructive">
+                  False branch
+                </h4>
+                <GraphConnector />
+                {alternateSteps.length > 0 ? (
+                  <WorkflowGraph
+                    steps={alternateSteps}
+                    prefix={`${path}.else`}
+                    selectedPath={selectedPath}
+                    onSelect={onSelect}
+                  />
+                ) : (
+                  <p className="text-xs text-muted">No steps in this branch.</p>
+                )}
+              </section>
+            </div>
+          )}
+
+          {step.type === 'parallel' && (
+            <section
+              aria-label={`${step.name} parallel group`}
+              className="mt-3 min-w-0 rounded-xl border border-primary/15 bg-primaryAccent/70 p-2 sm:p-3"
+            >
+              <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                Run in parallel · {nestedSteps.length} steps
+              </h4>
+              <GraphConnector />
+              {nestedSteps.length > 0 ? (
+                <div
+                  className="grid min-w-0 gap-2"
+                  style={{
+                    gridTemplateColumns:
+                      'repeat(auto-fit, minmax(min(100%, 18rem), 1fr))'
+                  }}
+                >
+                  <WorkflowGraph
+                    steps={nestedSteps}
+                    prefix={`${path}.parallel`}
+                    selectedPath={selectedPath}
+                    onSelect={onSelect}
+                    sequenceConnectors={false}
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-muted">No parallel steps.</p>
+              )}
+            </section>
+          )}
+
+          {sequenceConnectors && index < steps.length - 1 && <GraphConnector />}
+        </div>
+      )
+    })}
+  </div>
+)
+
+const StepRelationshipsPanel = ({
+  relationships,
+  onSelectStep
+}: {
+  relationships: StepRelationships
+  onSelectStep: (step: WorkflowStepDefinition, path: string) => void
+}) => {
+  const relationControl = (title: string, relation: StepRelationship) => (
+    <div className="rounded-lg border border-primary/10 bg-accent p-3">
+      <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted">
+        {title}
+      </div>
+      {relation.step && relation.path ? (
+        <button
+          type="button"
+          aria-label={`Open ${title.toLowerCase()}: ${relation.step.name}`}
+          onClick={() => onSelectStep(relation.step!, relation.path!)}
+          className="w-full min-w-0 text-left"
+        >
+          <span className="block text-[10px] leading-4 text-muted">
+            {relation.label}
+          </span>
+          <span className="mt-1 block break-words text-xs font-medium text-primary">
+            {relation.step.name}
+          </span>
+          <span className="mt-1 block break-all font-mono text-[10px] text-muted">
+            {stepTypeLabel(relation.step.type)} · {relation.path}
+          </span>
+        </button>
+      ) : (
+        <p className="text-xs leading-5 text-muted">{relation.label}</p>
+      )}
+    </div>
+  )
+
+  return (
+    <section aria-label="Step relationships" className="space-y-2">
+      <h3 className="text-[10px] font-medium uppercase tracking-wide text-muted">
+        Step relationships
+      </h3>
+      {relationControl('Previous step', relationships.previous)}
+      {relationControl('Next step', relationships.next)}
+      {relationships.parallelSiblings.length > 0 && (
+        <div className="rounded-lg border border-primary/10 bg-accent p-3">
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted">
+            Runs alongside
+          </div>
+          <div className="space-y-1">
+            {relationships.parallelSiblings.map(({ step, path }) => (
+              <button
+                key={path}
+                type="button"
+                aria-label={`Open parallel step: ${step.name}`}
+                onClick={() => onSelectStep(step, path)}
+                className="w-full min-w-0 rounded-md px-1 py-1 text-left hover:bg-background"
+              >
+                <span className="block break-words text-xs text-primary">
+                  {step.name}
+                </span>
+                <span className="mt-1 block break-all font-mono text-[10px] text-muted">
+                  {stepTypeLabel(step.type)} · {path}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 const WorkflowExplorer = () => {
   const { selectedEndpoint, authToken, isEndpointActive } = useStore()
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('')
   const [definition, setDefinition] = useState<WorkflowDefinition | null>(null)
   const [revision, setRevision] = useState('')
+  const [revisionError, setRevisionError] = useState('')
   const [listLoading, setListLoading] = useState(true)
   const [definitionLoading, setDefinitionLoading] = useState(false)
   const [listError, setListError] = useState('')
   const [definitionError, setDefinitionError] = useState('')
+  const [definitionNotice, setDefinitionNotice] = useState('')
   const [selectedStep, setSelectedStep] =
     useState<WorkflowStepDefinition | null>(null)
   const [selectedPath, setSelectedPath] = useState('')
@@ -243,12 +588,81 @@ const WorkflowExplorer = () => {
   } | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [workflowView, setWorkflowView] = useState<'tree' | 'graph'>('tree')
+  const [isWideViewport, setIsWideViewport] = useState(false)
+  const detailsPanelRef = useRef<HTMLElement>(null)
+  const closeDetailsButtonRef = useRef<HTMLButtonElement>(null)
+  const stepTriggerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 1536px)')
+    const syncViewport = () => setIsWideViewport(mediaQuery.matches)
+
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
+
+  const closeStepDetails = useCallback(() => {
+    setDetailsOpen(false)
+    window.requestAnimationFrame(() => stepTriggerRef.current?.focus())
+  }, [])
+
+  useEffect(() => {
+    if (!detailsOpen || isWideViewport) return
+
+    const panel = detailsPanelRef.current
+    if (!panel) return
+
+    closeDetailsButtonRef.current?.focus()
+
+    const focusableSelector =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeStepDetails()
+        return
+      }
+
+      if (event.key !== 'Tab') return
+
+      const focusable = Array.from(
+        panel.querySelectorAll<HTMLElement>(focusableSelector)
+      ).filter((element) => element.getClientRects().length > 0)
+      if (focusable.length === 0) {
+        event.preventDefault()
+        panel.focus()
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const active = document.activeElement
+
+      if (!panel.contains(active)) {
+        event.preventDefault()
+        const target = event.shiftKey ? last : first
+        target.focus()
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [closeStepDetails, detailsOpen, isWideViewport])
 
   useEffect(() => {
     const controller = new AbortController()
     setWorkflows([])
     setDefinition(null)
     setRevision('')
+    setRevisionError('')
     setListError('')
     setListLoading(true)
     setSelectedWorkflowId('')
@@ -258,14 +672,32 @@ const WorkflowExplorer = () => {
       return () => controller.abort()
     }
 
-    Promise.all([
+    Promise.allSettled([
       getWorkflowsAPI(selectedEndpoint, authToken, controller.signal),
       getFactoryRevisionAPI(selectedEndpoint, authToken, controller.signal)
     ])
-      .then(([items, factory]) => {
-        setWorkflows(items)
-        setRevision(factory.revision)
-        setSelectedWorkflowId(items[0]?.id || '')
+      .then(([workflowResult, revisionResult]) => {
+        if (controller.signal.aborted) return
+
+        if (workflowResult.status === 'fulfilled') {
+          setWorkflows(workflowResult.value)
+          setSelectedWorkflowId(workflowResult.value[0]?.id || '')
+        } else {
+          setListError(
+            workflowResult.reason instanceof Error
+              ? workflowResult.reason.message
+              : 'Unable to load workflows.'
+          )
+        }
+        if (revisionResult.status === 'fulfilled') {
+          setRevision(revisionResult.value.revision)
+        } else {
+          setRevisionError(
+            revisionResult.reason instanceof Error
+              ? revisionResult.reason.message
+              : 'Factory revision is unavailable.'
+          )
+        }
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
@@ -294,26 +726,71 @@ const WorkflowExplorer = () => {
     setSelectedComponent(null)
     setDetailsOpen(false)
     setDefinitionError('')
+    setDefinitionNotice('')
     setDefinitionLoading(true)
 
-    getWorkflowDefinitionAPI(
+    const showDefinition = (workflow: WorkflowDefinition) => {
+      if (controller.signal.aborted) return
+      setDefinition(workflow)
+      setSelectedStep(workflow.steps[0] || null)
+      setSelectedPath(workflow.steps.length > 0 ? 'root.0' : '')
+      setDefinitionLoading(false)
+    }
+
+    getWorkflowRuntimeDetailsAPI(
       selectedEndpoint,
       selectedWorkflowId,
       authToken,
       controller.signal
     )
-      .then((workflow) => {
-        setDefinition(workflow)
-        setSelectedStep(workflow.steps[0] || null)
-        setSelectedPath(workflow.steps.length > 0 ? 'root.0' : '')
+      .then((runtimeWorkflow) => {
+        showDefinition(runtimeWorkflow)
+        setDefinitionNotice('Loading Factory definition details…')
+        return getFactoryWorkflowDefinitionAPI(
+          selectedEndpoint,
+          selectedWorkflowId,
+          authToken,
+          controller.signal
+        )
+          .then((factoryWorkflow) => {
+            if (controller.signal.aborted) return
+            setDefinition(factoryWorkflow)
+            setDefinitionNotice('')
+          })
+          .catch((error: unknown) => {
+            if (!controller.signal.aborted) {
+              const reason =
+                error instanceof Error
+                  ? error.message
+                  : 'Factory definition details are unavailable.'
+              setDefinitionNotice(
+                `${reason} Showing the AgentOS runtime workflow.`
+              )
+            }
+          })
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
-          setDefinitionError(
-            error instanceof Error
-              ? error.message
-              : 'Unable to load the workflow definition.'
+          setDefinitionNotice('')
+          getFactoryWorkflowDefinitionAPI(
+            selectedEndpoint,
+            selectedWorkflowId,
+            authToken,
+            controller.signal
           )
+            .then((factoryWorkflow) => showDefinition(factoryWorkflow))
+            .catch((factoryError: unknown) => {
+              if (controller.signal.aborted) return
+              const runtimeMessage =
+                error instanceof Error
+                  ? error.message
+                  : 'AgentOS workflow details are unavailable.'
+              const factoryMessage =
+                factoryError instanceof Error
+                  ? factoryError.message
+                  : 'Factory workflow details are unavailable.'
+              setDefinitionError(`${runtimeMessage}. ${factoryMessage}`)
+            })
         }
       })
       .finally(() => {
@@ -330,6 +807,13 @@ const WorkflowExplorer = () => {
   ])
 
   const handleSelectStep = (step: WorkflowStepDefinition, path: string) => {
+    const activeElement = document.activeElement
+    if (
+      activeElement instanceof HTMLElement &&
+      !detailsPanelRef.current?.contains(activeElement)
+    ) {
+      stepTriggerRef.current = activeElement
+    }
     setSelectedStep(step)
     setSelectedPath(path)
     setDetailsOpen(true)
@@ -345,6 +829,10 @@ const WorkflowExplorer = () => {
   )
   const selectedReference = selectedStep?.ref || 'No executor reference'
   const counts = definition ? workflowCounts(definition.steps) : null
+  const selectedRelationships =
+    definition && selectedPath
+      ? findStepRelationships(definition.steps, selectedPath)
+      : null
 
   const branchItems = (
     label: string,
@@ -375,7 +863,7 @@ const WorkflowExplorer = () => {
                   {step.name}
                 </span>
                 <span className="mt-1 block whitespace-normal text-[10px] leading-4 text-muted [overflow-wrap:anywhere]">
-                  {STEP_TYPE_LABELS[step.type]}
+                  {stepTypeLabel(step.type)}
                   {step.ref ? ` · ${step.ref}` : ''}
                 </span>
               </span>
@@ -404,6 +892,11 @@ const WorkflowExplorer = () => {
           {revision && (
             <span className="rounded-lg border border-primary/10 bg-accent px-3 py-2 font-mono text-xs text-muted">
               Definition {revision}
+            </span>
+          )}
+          {revisionError && (
+            <span className="text-xs text-muted">
+              Factory revision unavailable
             </span>
           )}
           <Button
@@ -481,6 +974,11 @@ const WorkflowExplorer = () => {
             </div>
           ) : definition ? (
             <div className="mx-auto w-full max-w-5xl">
+              {definitionNotice && (
+                <div className="mb-4 rounded-lg border border-primary/15 bg-accent px-3 py-2 text-xs leading-5 text-muted">
+                  {definitionNotice}
+                </div>
+              )}
               <div className="mb-7">
                 <h2 className="text-xl font-medium text-primary">
                   {definition.name || selectedSummary?.name || definition.id}
@@ -494,17 +992,63 @@ const WorkflowExplorer = () => {
                     <span>{counts.count} steps</span>
                     <span>{counts.agents} agents</span>
                     <span>{counts.teams} teams</span>
-                    <span>Revision {definition.revision}</span>
+                    {definition.revision ? (
+                      <span>Revision {definition.revision}</span>
+                    ) : (
+                      <span>
+                        Source {definition.source || 'AgentOS runtime'}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] font-medium uppercase tracking-wide text-muted">
+                  Workflow view
+                </span>
+                <div
+                  role="group"
+                  aria-label="Workflow view"
+                  className="flex items-center gap-1 rounded-lg border border-primary/10 bg-accent p-1"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={workflowView === 'tree' ? 'outline' : 'ghost'}
+                    aria-pressed={workflowView === 'tree'}
+                    onClick={() => setWorkflowView('tree')}
+                    className="h-8 px-3 text-xs"
+                  >
+                    Tree
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={workflowView === 'graph' ? 'outline' : 'ghost'}
+                    aria-pressed={workflowView === 'graph'}
+                    onClick={() => setWorkflowView('graph')}
+                    className="h-8 px-3 text-xs"
+                  >
+                    Graph
+                  </Button>
+                </div>
+              </div>
               {definition.steps.length > 0 ? (
-                <WorkflowSteps
-                  steps={definition.steps}
-                  prefix="root"
-                  selectedPath={selectedPath}
-                  onSelect={handleSelectStep}
-                />
+                workflowView === 'tree' ? (
+                  <WorkflowSteps
+                    steps={definition.steps}
+                    prefix="root"
+                    selectedPath={selectedPath}
+                    onSelect={handleSelectStep}
+                  />
+                ) : (
+                  <WorkflowGraph
+                    steps={definition.steps}
+                    prefix="root"
+                    selectedPath={selectedPath}
+                    onSelect={handleSelectStep}
+                  />
+                )
               ) : (
                 <p className="rounded-xl border border-primary/10 bg-accent p-4 text-sm text-muted">
                   This workflow has no steps.
@@ -526,27 +1070,43 @@ const WorkflowExplorer = () => {
           <button
             type="button"
             aria-label="Close step details"
-            onClick={() => setDetailsOpen(false)}
+            onClick={closeStepDetails}
             className="fixed inset-0 z-40 bg-background/65 2xl:hidden"
           />
         )}
         <aside
+          ref={detailsPanelRef}
+          role={detailsOpen && !isWideViewport ? 'dialog' : undefined}
+          aria-modal={detailsOpen && !isWideViewport ? true : undefined}
+          aria-labelledby="workflow-step-details-title"
+          tabIndex={detailsOpen && !isWideViewport ? -1 : undefined}
           className={`${detailsOpen ? 'fixed inset-y-3 right-3 z-50 w-[min(94vw,30rem)] rounded-xl border border-primary/15 bg-background shadow-2xl' : 'hidden'} min-h-0 overflow-y-auto p-4 sm:p-5 2xl:static 2xl:z-auto 2xl:block 2xl:w-auto 2xl:rounded-none 2xl:border-y-0 2xl:border-l 2xl:border-r-0 2xl:bg-background 2xl:shadow-none`}
         >
           <div className="mb-5 flex items-center justify-between gap-3">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-muted">
+            <div
+              id="workflow-step-details-title"
+              className="text-[11px] font-medium uppercase tracking-wide text-muted"
+            >
               Step details
             </div>
             <Button
               type="button"
               size="sm"
               variant="outline"
-              onClick={() => setDetailsOpen(false)}
+              onClick={closeStepDetails}
+              ref={closeDetailsButtonRef}
+              data-inspector-close
               className="h-8 border-primary/15 text-xs text-muted 2xl:hidden"
             >
               Close
             </Button>
           </div>
+          {selectedStep && selectedRelationships && (
+            <StepRelationshipsPanel
+              relationships={selectedRelationships}
+              onSelectStep={handleSelectStep}
+            />
+          )}
           {selectedComponent ? (
             <ComponentDetails
               kind={selectedComponent.kind}
@@ -581,7 +1141,7 @@ const WorkflowExplorer = () => {
                   <h3 className="text-sm font-medium">{selectedStep.name}</h3>
                 </div>
                 <p className="mt-2 pl-6 text-xs text-muted">
-                  {STEP_TYPE_LABELS[selectedStep.type]}
+                  {stepTypeLabel(selectedStep.type)}
                 </p>
               </div>
               <div className="space-y-2 rounded-xl border border-primary/10 bg-accent p-3">

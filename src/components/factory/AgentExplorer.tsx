@@ -6,6 +6,7 @@ import { Bot, Search, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import ComponentDetails from '@/components/factory/ComponentDetails'
 import { useStore } from '@/store'
+import { useQueryState } from 'nuqs'
 
 type ComponentKind = 'agent' | 'team'
 
@@ -15,17 +16,37 @@ const AgentExplorer = () => {
   const [selectedId, setSelectedId] = useState('')
   const [search, setSearch] = useState('')
   const components = kind === 'agent' ? agents : teams
+  const [factoryKindQuery, setFactoryKindQuery] = useQueryState('factory_kind')
+  const [factoryIdQuery, setFactoryIdQuery] = useQueryState('factory_id')
+  const [returnTeamQuery, setReturnTeamQuery] = useQueryState('factory_return_team')
+  const searchQuery = search.trim().toLowerCase()
   const filteredComponents = components.filter((component) =>
-    `${component.name || ''} ${component.id}`
+    [
+      component.name,
+      component.id,
+      component.model?.name,
+      component.model?.model,
+      component.model?.provider
+    ]
+      .filter(Boolean)
+      .join(' ')
       .toLowerCase()
-      .includes(search.trim().toLowerCase())
+      .includes(searchQuery)
   )
 
   useEffect(() => {
+    if ((factoryKindQuery === 'agent' || factoryKindQuery === 'team') && factoryKindQuery !== kind) {
+      setKind(factoryKindQuery)
+      return
+    }
+    if (factoryIdQuery) {
+      if (selectedId !== factoryIdQuery) setSelectedId(factoryIdQuery)
+      return
+    }
     if (!components.some((component) => component.id === selectedId)) {
       setSelectedId(components[0]?.id || '')
     }
-  }, [components, kind, selectedId])
+  }, [components, factoryKindQuery, factoryIdQuery, kind, selectedId])
 
   const selectKind = (nextKind: ComponentKind) => {
     if (nextKind === kind) return
@@ -33,6 +54,9 @@ const AgentExplorer = () => {
     setKind(nextKind)
     setSearch('')
     setSelectedId('')
+    void setFactoryKindQuery(nextKind)
+    void setFactoryIdQuery(null)
+    void setReturnTeamQuery(null)
   }
 
   return (
@@ -91,8 +115,8 @@ const AgentExplorer = () => {
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder={`Search ${kind}s`}
-              aria-label={`Search ${kind}s`}
+              placeholder={`Search ${kind}s by name, ID, or model`}
+              aria-label={`Search ${kind}s by name, ID, or model`}
               className="h-10 min-w-0 flex-1 bg-transparent text-sm text-primary outline-none placeholder:text-muted"
             />
           </label>
@@ -117,7 +141,12 @@ const AgentExplorer = () => {
               <button
                 key={component.id}
                 type="button"
-                onClick={() => setSelectedId(component.id)}
+                onClick={() => {
+                  setSelectedId(component.id)
+                  void setFactoryKindQuery(kind)
+                  void setFactoryIdQuery(component.id)
+                  void setReturnTeamQuery(null)
+                }}
                 aria-pressed={selectedId === component.id}
                 className={`w-full min-w-0 rounded-xl border p-3 text-left transition-colors ${selectedId === component.id ? 'border-primary/40 bg-accent' : 'border-primary/10 bg-background hover:bg-accent/60'}`}
               >
@@ -145,10 +174,27 @@ const AgentExplorer = () => {
                 kind={kind}
                 id={selectedId}
                 onSelectAgent={(agentId) => {
+                  const returnTeamId = kind === 'team' ? selectedId : returnTeamQuery
                   setKind('agent')
                   setSearch('')
                   setSelectedId(agentId)
+                  void setFactoryKindQuery('agent')
+                  void setFactoryIdQuery(agentId)
+                  void setReturnTeamQuery(returnTeamId || null)
                 }}
+                onBack={kind === 'agent' && returnTeamQuery
+                  ? () => {
+                      setKind('team')
+                      setSearch('')
+                      setSelectedId(returnTeamQuery)
+                      void setFactoryKindQuery('team')
+                      void setFactoryIdQuery(returnTeamQuery)
+                      void setReturnTeamQuery(null)
+                    }
+                  : undefined}
+                backLabel={kind === 'agent' && returnTeamQuery
+                  ? `Back to ${teams.find((team) => team.id === returnTeamQuery)?.name || returnTeamQuery}`
+                  : undefined}
               />
             </div>
           ) : !isEndpointActive ? (

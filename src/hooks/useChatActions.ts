@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { useStore } from '../store'
@@ -8,6 +8,7 @@ import { getAgentsAPI, getStatusAPI, getTeamsAPI } from '@/api/os'
 import { useQueryState } from 'nuqs'
 
 const useChatActions = () => {
+  const initializeControllerRef = useRef<AbortController | null>(null)
   const { chatInputRef } = useStore()
   const selectedEndpoint = useStore((state) => state.selectedEndpoint)
   const authToken = useStore((state) => state.authToken)
@@ -23,31 +24,31 @@ const useChatActions = () => {
   const [teamId, setTeamId] = useQueryState('team')
   const [, setDbId] = useQueryState('db_id')
 
-  const getStatus = useCallback(async () => {
+  const getStatus = useCallback(async (signal?: AbortSignal) => {
     try {
-      const status = await getStatusAPI(selectedEndpoint, authToken)
+      const status = await getStatusAPI(selectedEndpoint, authToken, signal)
       return status
     } catch {
-      return 503
+      return signal?.aborted ? 0 : 503
     }
   }, [selectedEndpoint, authToken])
 
-  const getAgents = useCallback(async () => {
+  const getAgents = useCallback(async (signal?: AbortSignal) => {
     try {
-      const agents = await getAgentsAPI(selectedEndpoint, authToken)
+      const agents = await getAgentsAPI(selectedEndpoint, authToken, signal)
       return agents
     } catch {
-      toast.error('Error fetching agents')
+      if (!signal?.aborted) toast.error('Error fetching agents')
       return []
     }
   }, [selectedEndpoint, authToken])
 
-  const getTeams = useCallback(async () => {
+  const getTeams = useCallback(async (signal?: AbortSignal) => {
     try {
-      const teams = await getTeamsAPI(selectedEndpoint, authToken)
+      const teams = await getTeamsAPI(selectedEndpoint, authToken, signal)
       return teams
     } catch {
-      toast.error('Error fetching teams')
+      if (!signal?.aborted) toast.error('Error fetching teams')
       return []
     }
   }, [selectedEndpoint, authToken])
@@ -73,15 +74,24 @@ const useChatActions = () => {
   )
 
   const initialize = useCallback(async () => {
+    initializeControllerRef.current?.abort()
+    const controller = new AbortController()
+    initializeControllerRef.current = controller
+    const { signal } = controller
     setIsEndpointLoading(true)
     try {
-      const status = await getStatus()
+      const status = await getStatus(signal)
+      if (signal.aborted) return
       let agents: AgentDetails[] = []
       let teams: TeamDetails[] = []
       if (status === 200) {
         setIsEndpointActive(true)
-        teams = await getTeams()
-        agents = await getAgents()
+        teams = await getTeams(signal)
+        if (signal.aborted) return
+        agents = await getAgents(signal)
+        if (signal.aborted) return
+        setAgents(agents)
+        setTeams(teams)
 
         if (!agentId && !teamId) {
           const currentMode = useStore.getState().mode
@@ -145,6 +155,7 @@ const useChatActions = () => {
       }
       return { agents, teams }
     } catch (error) {
+      if (signal.aborted) return
       console.error('Error initializing :', error)
       setIsEndpointActive(false)
       setMode('agent')
@@ -154,7 +165,10 @@ const useChatActions = () => {
       setAgents([])
       setTeams([])
     } finally {
-      setIsEndpointLoading(false)
+      if (initializeControllerRef.current === controller) {
+        initializeControllerRef.current = null
+        setIsEndpointLoading(false)
+      }
     }
   }, [
     getStatus,

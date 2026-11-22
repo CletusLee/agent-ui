@@ -106,21 +106,21 @@ const ChatBlankState = () => {
 
   return (
     <section
-      className="flex flex-col items-center text-center font-geist"
+      className="flex w-full min-w-0 flex-col items-center px-3 text-center font-geist"
       aria-label="Welcome message"
     >
-      <div className="flex max-w-3xl flex-col gap-y-8">
+      <div className="flex w-full min-w-0 max-w-3xl flex-col gap-y-8">
         <motion.h1
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.3 }}
-          className="text-3xl font-[600] tracking-tight"
+          className="w-full min-w-0 text-2xl font-[600] leading-tight tracking-tight sm:text-3xl"
         >
-          <div className="flex items-center justify-center gap-x-2 whitespace-nowrap font-medium">
-            <span className="flex items-center font-[600]">
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 whitespace-normal font-medium">
+            <span className="flex min-w-0 items-center font-[600]">
               This is an open-source
             </span>
-            <span className="inline-flex translate-y-[10px] scale-125 items-center transition-transform duration-200 hover:rotate-6">
+            <span className="inline-flex shrink-0 translate-y-[10px] scale-100 items-center transition-transform duration-200 hover:rotate-6 sm:scale-125">
               <Link
                 href={EXTERNAL_LINKS.agno}
                 target="_blank"
@@ -130,10 +130,10 @@ const ChatBlankState = () => {
                 <Icon type="agno-tag" size="default" />
               </Link>
             </span>
-            <span className="flex items-center font-[600]">
+            <span className="flex min-w-0 items-center font-[600]">
               Agent UI, built with
             </span>
-            <span className="inline-flex translate-y-[5px] scale-125 items-center">
+            <span className="inline-flex shrink-0 translate-y-[5px] scale-100 items-center sm:scale-125">
               <div className="relative ml-2 h-[40px] w-[90px]">
                 {TECH_ICONS.map((icon) => (
                   <motion.div
@@ -172,13 +172,15 @@ const ChatBlankState = () => {
               </div>
             </span>
           </div>
-          <p>For the full experience, visit the AgentOS</p>
+          <p className="mt-2 whitespace-normal px-2">
+            For the full experience, visit the AgentOS
+          </p>
         </motion.h1>
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.5 }}
-          className="flex justify-center gap-4"
+          className="flex flex-wrap justify-center gap-2 sm:gap-4"
         >
           <ActionButton
             href={EXTERNAL_LINKS.documentation}

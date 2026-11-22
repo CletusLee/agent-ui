@@ -24,6 +24,7 @@ const useAIChatStreamHandler = () => {
     (state) => state.setStreamingErrorMessage
   )
   const setIsStreaming = useStore((state) => state.setIsStreaming)
+  const setStreamController = useStore((state) => state.setStreamController)
   const setSessionsData = useStore((state) => state.setSessionsData)
   const { streamResponse } = useAIResponseStream()
 
@@ -101,6 +102,9 @@ const useAIChatStreamHandler = () => {
 
   const handleStreamResponse = useCallback(
     async (input: string | FormData) => {
+      useStore.getState().streamController?.abort()
+      const streamController = new AbortController()
+      setStreamController(streamController)
       setIsStreaming(true)
 
       const formData = input instanceof FormData ? input : new FormData()
@@ -157,6 +161,7 @@ const useAIChatStreamHandler = () => {
           updateMessagesWithErrorState()
           setStreamingErrorMessage('Please select an agent or team first.')
           setIsStreaming(false)
+          setStreamController(null)
           return
         }
 
@@ -173,6 +178,7 @@ const useAIChatStreamHandler = () => {
           apiUrl: RunUrl,
           headers,
           requestBody: formData,
+          signal: streamController.signal,
           onChunk: (chunk: RunResponse) => {
             if (
               chunk.event === RunEvent.RunStarted ||
@@ -423,8 +429,11 @@ const useAIChatStreamHandler = () => {
           )
         }
       } finally {
-        focusChatInput()
-        setIsStreaming(false)
+        if (useStore.getState().streamController === streamController) {
+          setStreamController(null)
+          focusChatInput()
+          setIsStreaming(false)
+        }
       }
     },
     [
@@ -439,6 +448,7 @@ const useAIChatStreamHandler = () => {
       mode,
       setStreamingErrorMessage,
       setIsStreaming,
+      setStreamController,
       focusChatInput,
       setSessionsData,
       sessionId,

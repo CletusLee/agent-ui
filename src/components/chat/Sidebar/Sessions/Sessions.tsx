@@ -48,7 +48,9 @@ const Sessions = () => {
     hydrated,
     sessionsData,
     setSessionsData,
-    isSessionsLoading
+    isSessionsLoading,
+    sessionsError,
+    setSessionsError
   } = useStore()
 
   const [isScrolling, setIsScrolling] = useState(false)
@@ -92,9 +94,11 @@ const Sessions = () => {
     if (!selectedEndpoint || isEndpointLoading) return
     if (!(agentId || teamId || dbId)) {
       setSessionsData([])
+      setSessionsError(null)
       return
     }
     setSessionsData([])
+    setSessionsError(null)
     getSessions({
       entityType: mode,
       agentId,
@@ -109,7 +113,8 @@ const Sessions = () => {
     mode,
     isEndpointLoading,
     getSessions,
-    dbId
+    dbId,
+    setSessionsError
   ])
 
   useEffect(() => {
@@ -120,6 +125,10 @@ const Sessions = () => {
     (id: string) => () => setSelectedSessionId(id),
     []
   )
+
+  const handleRetry = useCallback(() => {
+    getSessions({ entityType: mode, agentId, teamId, dbId })
+  }, [getSessions, mode, agentId, teamId, dbId])
 
   if (isSessionsLoading || isEndpointLoading) {
     return (
@@ -145,7 +154,9 @@ const Sessions = () => {
         onMouseOver={() => setIsScrolling(true)}
         onMouseLeave={handleScroll}
       >
-        {!isEndpointActive ||
+        {sessionsError ? (
+          <SessionBlankState errorMessage={sessionsError} onRetry={handleRetry} />
+        ) : !isEndpointActive ||
         (!isSessionsLoading &&
           (!sessionsData || sessionsData?.length === 0)) ? (
           <SessionBlankState />

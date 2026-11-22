@@ -85,11 +85,19 @@ const HistoryBlankStateIcon = () => (
   </svg>
 )
 
-const SessionBlankState = () => {
+interface SessionBlankStateProps {
+  errorMessage?: string
+  onRetry?: () => void
+}
+
+const SessionBlankState = ({
+  errorMessage,
+  onRetry
+}: SessionBlankStateProps) => {
   const { selectedEndpoint, isEndpointActive } = useStore()
   const [agentId] = useQueryState('agent')
 
-  const errorMessage = (() => {
+  const blankStateMessage = (() => {
     switch (true) {
       case !isEndpointActive:
         return 'Endpoint is not connected. Please connect the endpoint to see the history.'
@@ -107,10 +115,24 @@ const SessionBlankState = () => {
       <div className="flex flex-col items-center gap-1">
         <HistoryBlankStateIcon />
         <div className="flex flex-col items-center gap-2">
-          <h3 className="text-sm font-medium text-primary">No Session found</h3>
-          <p className="max-w-[210px] text-center text-sm text-muted">
-            {errorMessage}
+          <h3 className="text-sm font-medium text-primary">
+            {errorMessage ? 'Unable to load sessions' : 'No Session found'}
+          </h3>
+          <p
+            role={errorMessage ? 'alert' : undefined}
+            className="max-w-[210px] text-center text-sm text-muted"
+          >
+            {errorMessage ?? blankStateMessage}
           </p>
+          {errorMessage && onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-1 text-sm font-medium text-primary underline underline-offset-4"
+            >
+              Retry
+            </button>
+          )}
         </div>
       </div>
     </div>

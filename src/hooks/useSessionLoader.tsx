@@ -1,7 +1,6 @@
 import { useCallback } from 'react'
 import { getSessionAPI, getAllSessionsAPI } from '@/api/os'
 import { useStore } from '../store'
-import { toast } from 'sonner'
 import { ChatMessage, ToolCall, ReasoningMessage, ChatEntry } from '@/types/os'
 import { getJsonMarkdown } from '@/lib/utils'
 
@@ -30,6 +29,7 @@ const useSessionLoader = () => {
   const authToken = useStore((state) => state.authToken)
   const setIsSessionsLoading = useStore((state) => state.setIsSessionsLoading)
   const setSessionsData = useStore((state) => state.setSessionsData)
+  const setSessionsError = useStore((state) => state.setSessionsError)
 
   const getSessions = useCallback(
     async ({ entityType, agentId, teamId, dbId }: LoaderArgs) => {
@@ -38,6 +38,7 @@ const useSessionLoader = () => {
 
       try {
         setIsSessionsLoading(true)
+        setSessionsError(null)
 
         const sessions = await getAllSessionsAPI(
           selectedEndpoint,
@@ -47,14 +48,22 @@ const useSessionLoader = () => {
           authToken
         )
         setSessionsData(sessions.data ?? [])
-      } catch {
-        toast.error('Error loading sessions')
+      } catch (error) {
+        setSessionsError(
+          error instanceof Error ? error.message : 'Unable to load sessions.'
+        )
         setSessionsData([])
       } finally {
         setIsSessionsLoading(false)
       }
     },
-    [selectedEndpoint, authToken, setSessionsData, setIsSessionsLoading]
+    [
+      selectedEndpoint,
+      authToken,
+      setSessionsData,
+      setIsSessionsLoading,
+      setSessionsError
+    ]
   )
 
   const getSession = useCallback(

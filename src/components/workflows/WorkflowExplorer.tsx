@@ -1109,6 +1109,7 @@ const WorkflowExplorer = () => {
           )}
           {selectedComponent ? (
             <ComponentDetails
+              key={`${selectedComponent.kind}:${selectedComponent.id}`}
               kind={selectedComponent.kind}
               id={selectedComponent.id}
               onSelectAgent={(agentId) =>

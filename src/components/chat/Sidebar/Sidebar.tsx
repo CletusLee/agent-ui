@@ -270,6 +270,7 @@ const Endpoint = () => {
             variant="ghost"
             size="icon"
             onClick={handleRefresh}
+            aria-label="Refresh AgentOS connection"
             className="hover:cursor-pointer hover:bg-transparent"
           >
             <motion.div

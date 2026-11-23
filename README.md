@@ -106,7 +106,7 @@ The System view groups deployment health, registered components, storage, models
 
 ## Current delivery and limitations
 
-The POC runs this fork through a pinned upstream checkout plus its `agent-ui.patch`. It provides a Docker bind-mounted development overlay for source iteration and a production image for deployment. The latest local production image is `sha256:0a11f3d38a56df8924319a513a7c05f8395da99c123d901c3c28e55f3775465f`; image IDs are local build results and can differ on another machine.
+The POC runs this fork through a pinned upstream checkout plus its `agent-ui.patch`. It provides a Docker bind-mounted development overlay for source iteration and a production image for deployment. As of 2026-11-23, the latest local production image is `sha256:335cab6a78137c56a89a6838968edaf798bd32b35ed98f774065bf3267924bb9`; this build includes the Runs deep-link `db_id` initialization fix. Image IDs are local build results and can differ on another machine.
 
 Several features remain partial: real Knowledge, Memory, Learning, Trace and Evaluation records are needed for positive-data verification; some AgentOS management services return 503 in this POC; Workflow execution, historical graph highlighting, real stream abort and full accessibility checks remain open. Metrics costs are not supplied by the current API. The POC capability plan and verification evidence track the exact remaining scope.
 
